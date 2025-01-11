@@ -15,6 +15,7 @@
 	do {								\
 		if (assertion)	{					\
             strerror(errno);					\
+            printf("skill issue\n");                    \
             exit(EXIT_FAILURE);					\
 		}							\
 	} while (0)

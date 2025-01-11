@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <errno.h> // nou
 
 void run(void)
 {
@@ -16,6 +17,8 @@ void cat(const char *filename)
 	int read_bytes;
 
 	fd = open(filename, O_RDONLY);
+	// sprintf(buf, "%d\n", errno);
+	// write(STDOUT_FILENO, buf, 100);
 
 	while ((read_bytes = read(fd, buf, sizeof(buf))) > 0)
 		write(STDOUT_FILENO, buf, read_bytes);

@@ -9,6 +9,8 @@
 #include <sys/types.h>
 #include <sys/un.h> // nou
 #include <sys/socket.h> // nou
+#include <sys/wait.h> // nou
+#include <sys/epoll.h> // nou
 #include <unistd.h>
 
 #include "ipc.h"
@@ -17,6 +19,9 @@
 #ifndef OUTPUT_TEMPLATE
 #define OUTPUT_TEMPLATE "../checker/output/out-XXXXXX"
 #endif
+
+int epollfd;
+struct epoll_event ev, events[1000];
 
 static int lib_prehooks(struct lib *lib)
 {
@@ -29,16 +34,28 @@ static int lib_load(struct lib *lib)
 	/* TODO: Implement lib_load(). */
 
 	lib->handle = dlopen(lib->libname, RTLD_LAZY);
-	DIE(!lib->handle, "dlopen");
+	if(!lib->handle) {
+		return -1;
+	}
 
 	dlerror();
 
-	if (lib->funcname) {
+	if (strcmp(lib->funcname, "") == 0) {
+		strcpy(lib->funcname, "run");
+	}
+
+	char buf[BUFSIZE];
+
+	if (strcmp(lib->filename, "") != 0) {
 		lib->p_run = dlsym(lib->handle, lib->funcname);
-		DIE(!dlerror(), "dlsym");
+		if (dlerror()) {
+			return -1;
+		}
 	} else {
 		lib->run = dlsym(lib->handle, lib->funcname);
-		DIE(!dlerror(), "dlsym");
+		if (dlerror()) {
+			return -1;
+		}
 	}
 
 	return 0;
@@ -47,9 +64,6 @@ static int lib_load(struct lib *lib)
 static int lib_execute(struct lib *lib)
 {
 	/* TODO: Implement lib_execute(). */
-	lib->outputfile = malloc(BUFSIZE);
-	DIE(lib->outputfile == NULL, "malloc");
-
 	strcpy(lib->outputfile, OUTPUT_TEMPLATE);
 	int fd = mkstemp(lib->outputfile);
 	DIE(fd < 0, "mkstemp");
@@ -70,6 +84,9 @@ static int lib_execute(struct lib *lib)
 		exit(0);
 	}
 
+	// int rc = waitpid(pid, NULL, 0);
+	// DIE(rc < 0, "waitpid");
+
 	close(fd);
 	
 	return 0;
@@ -87,10 +104,6 @@ static int lib_close(struct lib *lib)
 static int lib_posthooks(struct lib *lib)
 {
 	/* TODO: Implement lib_posthooks(). */
-	free(lib->libname);
-	free(lib->funcname);
-	free(lib->filename);
-	free(lib->outputfile);
 	return 0;
 }
 
@@ -103,8 +116,10 @@ static int lib_run(struct lib *lib)
 		return err;
 
 	err = lib_load(lib);
-	if (err)
+	if (err) {
+		fprintf(stderr, "asuhda\n");
 		return err;
+	}
 
 	err = lib_execute(lib);
 	if (err)
@@ -134,12 +149,21 @@ int main(void)
 	int ret, sockfd, connectfd;
 	char buf[BUFSIZE];
 	struct lib lib;
-	lib.libname = malloc(BUFSIZE);
-	DIE(lib.libname == NULL, "malloc");
-	lib.funcname = malloc(BUFSIZE);
-	DIE(lib.funcname == NULL, "malloc");
-	lib.filename = malloc(BUFSIZE);
-	DIE(lib.filename == NULL, "malloc");
+	lib.libname = calloc(1, BUFSIZE);
+	DIE(lib.libname == NULL, "calloc");
+	lib.funcname = calloc(1, BUFSIZE);
+	DIE(lib.funcname == NULL, "calloc");
+	lib.filename = calloc(1, BUFSIZE);
+	DIE(lib.filename == NULL, "calloc");
+	lib.outputfile = calloc(1, BUFSIZE);
+	DIE(lib.outputfile == NULL, "calloc");
+	lib.p_run = NULL;
+	lib.run = NULL;
+
+	epollfd = epoll_create1(0);
+    DIE(epollfd < 0, "epoll_create1");
+
+	setvbuf(stdout, NULL, _IONBF, 0);
 
 	sockfd = create_socket();
 	DIE(sockfd < 0, "create_socket");
@@ -159,20 +183,34 @@ int main(void)
 		connectfd = accept(sockfd, NULL, NULL);
 		DIE(connectfd < 0, "accept");
 
+		ev.events = EPOLLIN; // Monitor for incoming connections
+		ev.data.fd = connectfd;
+		if (epoll_ctl(epollfd, EPOLL_CTL_ADD, connectfd, &ev) == -1) {
+			perror("epoll_ctl: listen_fd");
+			exit(EXIT_FAILURE);
+		}
+
 		/* TODO - parse message with parse_command and populate lib */
 		memset(buf, 0, BUFSIZE);
 		ret = recv_socket(connectfd, buf, BUFSIZE);
 		DIE(ret < 0, "recv_socket");
 
 		ret = parse_command(buf, lib.libname, lib.funcname, lib.filename);
-		printf("libname: %s\n", lib.libname);
-		printf("funcname: %s\n", lib.funcname);
-		printf("filename: %s\n", lib.filename);
 		DIE(ret < 0, "parse_command");
 
 		/* TODO - handle request from client */
+		char buf[BUFSIZE];
+		int fd;
 		ret = lib_run(&lib);
-		DIE(ret < 0, "lib_run");
+		if (ret < 0) {
+			strcpy(lib.outputfile, OUTPUT_TEMPLATE);
+			fd = mkstemp(lib.outputfile);
+			DIE(fd < 0, "mkstemp");
+			
+			sprintf(buf, "Error: %s %s %s could not be executed.\n", lib.libname, lib.funcname, lib.filename);
+
+			write(fd, buf, strlen(buf));
+		}
 
 		ret = send_socket(connectfd, lib.outputfile, strlen(lib.outputfile));
 		DIE(ret < 0, "send_socket");
@@ -180,7 +218,17 @@ int main(void)
 		close_socket(connectfd);
 	}
 
+	int nfds = epoll_wait(epollfd, events, 1000, -1);
+	if (nfds == -1) {
+		perror("epoll_wait");
+		exit(EXIT_FAILURE);
+	}
+
 	close_socket(sockfd);
+	free(lib.libname);
+	free(lib.funcname);
+	free(lib.filename);
+	free(lib.outputfile);
 
 	return 0;
 }
