@@ -5,10 +5,21 @@
 
 /* ssize_t */
 #include <sys/types.h>
+#include <errno.h>
 
 #define BUFSIZE 1024
 #define MAX_CLIENTS 1024
 #define SOCKET_NAME "/tmp/sohack.socket"
+
+#define DIE(assertion, call_description)				\
+	do {								\
+		if (assertion)	{					\
+            strerror(errno);					\
+            exit(EXIT_FAILURE);					\
+		}							\
+	} while (0)
+
+struct sockaddr_un get_sockaddr(const char *path);
 
 int create_socket(void);
 int connect_socket(int fd);
