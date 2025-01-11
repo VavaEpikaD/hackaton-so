@@ -12,3 +12,5 @@ by Vlad-Raul Vasile and Belciug Matei
 * After the main loop we free the memory used
 * The first 6 tests pass
 * We tried using epoll for the 7th test
+
+* github link: https://github.com/VavaEpikaD/hackaton-so
